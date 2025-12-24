@@ -55,8 +55,6 @@ const App: React.FC = () => {
       score,
       movesLeft,
     };
-    // Note: Board state is managed and saved by the Board component itself
-    // We just merge the high-level stats here.
     const existing = localStorage.getItem(SAVE_KEY);
     const merged = existing ? { ...JSON.parse(existing), ...data } : data;
     localStorage.setItem(SAVE_KEY, JSON.stringify(merged));
@@ -74,6 +72,7 @@ const App: React.FC = () => {
       audioService.playLevelComplete();
     } else if (movesLeft <= 0 && score < currentLevel.targetScore && gameStatus === 'playing') {
       setGameStatus('game-over');
+      audioService.playGameOver();
     }
   }, [score, movesLeft, currentLevel, gameStatus]);
 
@@ -85,9 +84,8 @@ const App: React.FC = () => {
       setMovesLeft(LEVELS[nextIdx].moves);
       setGameStatus('playing');
       setLastHint(null);
-      setInitialBoard(null); // Clear initial board for new level
+      setInitialBoard(null);
       setBoardKey(prev => prev + 1);
-      // Update storage immediately
       localStorage.removeItem(SAVE_KEY); 
     } else {
       alert("You beat all levels! 🎉");
@@ -115,6 +113,8 @@ const App: React.FC = () => {
       setGameStatus('playing');
     }
   };
+
+  const progressPercent = Math.min((score / currentLevel.targetScore) * 100, 100);
 
   return (
     <div className="min-h-screen bg-pink-50 flex flex-col items-center p-4 sm:p-8 relative">
@@ -161,7 +161,7 @@ const App: React.FC = () => {
             <div className="mt-4 h-3 bg-pink-100 rounded-full overflow-hidden">
               <div 
                 className="h-full bg-gradient-to-r from-pink-400 to-purple-500 transition-all duration-500"
-                style={{ width: `${Math.min((score / currentLevel.targetScore) * 100, 100)}%` }}
+                style={{ width: `${progressPercent}%` }}
               />
             </div>
             <p className="text-xs text-pink-400 mt-2 font-bold uppercase tracking-widest">Target: {currentLevel.targetScore.toLocaleString()}</p>
@@ -173,31 +173,22 @@ const App: React.FC = () => {
               {movesLeft}
             </div>
           </div>
-
-          <div className="bg-white/80 rounded-3xl p-6 shadow-lg border-2 border-dashed border-pink-200">
-            <h3 className="text-lg font-game text-purple-600 mb-2">Objectives</h3>
-            <p className="text-sm text-gray-600 font-semibold mb-2 italic">
-              "Collect enough sugar to reach the target score before you run out of moves!"
-            </p>
-            <ul className="text-sm text-gray-600 space-y-2 font-semibold">
-              <li className="flex gap-2"><span>🎯</span> {currentLevel.targetScore} Points</li>
-              <li className="flex gap-2"><span>⏲️</span> {currentLevel.moves} Moves</li>
-            </ul>
-          </div>
         </div>
 
         {/* Center Panel: Game Board */}
         <div className="lg:col-span-6 flex justify-center relative">
-          <Board 
-            key={boardKey}
-            onScore={(points) => setScore(s => s + points)}
-            onMove={() => setMovesLeft(m => Math.max(0, m - 1))}
-            onHintReceived={setLastHint}
-            isAiThinking={isAiThinking}
-            setIsAiThinking={setIsAiThinking}
-            gameStatus={gameStatus}
-            initialBoard={initialBoard}
-          />
+          <div className={gameStatus === 'game-over' ? 'board-lost' : ''}>
+            <Board 
+              key={boardKey}
+              onScore={(points) => setScore(s => s + points)}
+              onMove={() => setMovesLeft(m => Math.max(0, m - 1))}
+              onHintReceived={setLastHint}
+              isAiThinking={isAiThinking}
+              setIsAiThinking={setIsAiThinking}
+              gameStatus={gameStatus}
+              initialBoard={initialBoard}
+            />
+          </div>
 
           {/* Overlays */}
           {gameStatus === 'paused' && (
@@ -205,18 +196,8 @@ const App: React.FC = () => {
               <div className="bg-white rounded-3xl p-8 shadow-2xl border-4 border-pink-400 text-center animate-bounce-subtle max-w-sm w-full">
                 <h2 className="text-5xl font-game text-pink-600 mb-6 drop-shadow-sm">PAUSED</h2>
                 <div className="flex flex-col gap-3">
-                  <button 
-                    onClick={togglePause}
-                    className="w-full py-4 bg-pink-500 text-white font-game rounded-2xl text-xl hover:bg-pink-600 transition-colors shadow-lg active:scale-95"
-                  >
-                    Resume Game
-                  </button>
-                  <button 
-                    onClick={restartGame}
-                    className="w-full py-4 bg-gray-200 text-gray-700 font-game rounded-2xl text-xl hover:bg-gray-300 transition-colors shadow-sm active:scale-95"
-                  >
-                    Restart
-                  </button>
+                  <button onClick={togglePause} className="w-full py-4 bg-pink-500 text-white font-game rounded-2xl text-xl hover:bg-pink-600 transition-colors shadow-lg active:scale-95">Resume</button>
+                  <button onClick={restartGame} className="w-full py-4 bg-gray-200 text-gray-700 font-game rounded-2xl text-xl hover:bg-gray-300 transition-colors shadow-sm active:scale-95">Restart</button>
                 </div>
               </div>
             </div>
@@ -226,32 +207,48 @@ const App: React.FC = () => {
             <div className="absolute inset-0 z-50 flex items-center justify-center p-4">
               <div className="bg-white rounded-3xl p-8 shadow-2xl border-4 border-green-400 text-center animate-bounce-subtle max-w-sm">
                 <h2 className="text-4xl font-game text-green-600 mb-4">Level Complete!</h2>
-                <p className="text-gray-600 font-semibold mb-6">
-                  Great job! You smashed the target score of {currentLevel.targetScore}!
-                </p>
-                <button 
-                  onClick={nextLevel}
-                  className="w-full py-4 bg-green-500 text-white font-game rounded-2xl text-xl hover:bg-green-600 transition-colors shadow-lg"
-                >
-                  Next Level ➔
-                </button>
+                <div className="text-6xl mb-4">✨🍰✨</div>
+                <p className="text-gray-600 font-semibold mb-6">You smashed the target! Ready for more?</p>
+                <button onClick={nextLevel} className="w-full py-4 bg-green-500 text-white font-game rounded-2xl text-xl hover:bg-green-600 transition-colors shadow-lg">Next Level ➔</button>
               </div>
             </div>
           )}
 
           {gameStatus === 'game-over' && (
-            <div className="absolute inset-0 z-50 flex items-center justify-center p-4">
-              <div className="bg-white rounded-3xl p-8 shadow-2xl border-4 border-red-400 text-center animate-fade-in max-w-sm">
-                <h2 className="text-4xl font-game text-red-600 mb-4">Out of Moves!</h2>
-                <p className="text-gray-600 font-semibold mb-6">
-                  You didn't reach the target score of {currentLevel.targetScore}. Don't give up!
-                </p>
-                <button 
-                  onClick={restartGame}
-                  className="w-full py-4 bg-red-500 text-white font-game rounded-2xl text-xl hover:bg-red-600 transition-colors shadow-lg"
-                >
-                  Try Again ↺
-                </button>
+            <div className="absolute inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-[4px]">
+              <div className="bg-white rounded-3xl p-10 shadow-2xl border-b-8 border-gray-400 text-center animate-game-over max-w-sm w-full relative overflow-hidden">
+                {/* Decorative particles */}
+                <div className="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-gray-200 via-gray-400 to-gray-200 opacity-50" />
+                
+                <div className="text-7xl mb-6 filter grayscale opacity-80">🍭💔</div>
+                <h2 className="text-5xl font-game text-gray-700 mb-2 uppercase tracking-tighter">Out of Moves</h2>
+                <p className="text-gray-400 font-bold text-sm mb-6 uppercase tracking-widest">The sweetness faded...</p>
+                
+                <div className="bg-gray-50 rounded-2xl p-6 mb-8 border border-gray-200">
+                  <div className="flex justify-between text-xs font-bold text-gray-400 uppercase mb-2">
+                    <span>Final Score</span>
+                    <span>{Math.round(progressPercent)}% of Goal</span>
+                  </div>
+                  <div className="text-4xl font-game text-gray-800 shimmer-text mb-4">
+                    {score.toLocaleString()}
+                  </div>
+                  <div className="h-4 bg-gray-200 rounded-full overflow-hidden p-1 shadow-inner">
+                    <div 
+                      className="h-full bg-gray-400 rounded-full transition-all duration-1000 ease-out"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-4">
+                  <button 
+                    onClick={restartGame}
+                    className="w-full py-5 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-game rounded-2xl text-2xl hover:brightness-110 transition-all shadow-xl active:scale-95 border-b-4 border-black/20"
+                  >
+                    Try Again ↺
+                  </button>
+                  <p className="text-xs text-gray-400 font-semibold italic">Don't give up! Every candy crush counts.</p>
+                </div>
               </div>
             </div>
           )}
@@ -261,46 +258,25 @@ const App: React.FC = () => {
         <div className="lg:col-span-3">
           <div className="bg-indigo-600 rounded-3xl p-6 shadow-2xl text-white min-h-[300px] flex flex-col relative overflow-hidden">
             <div className="absolute -top-10 -right-10 w-40 h-40 bg-indigo-500 rounded-full blur-3xl opacity-50" />
-            
             <div className="flex items-center gap-3 mb-4 z-10">
-              <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl">
-                🤖
-              </div>
+              <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center text-xl">🤖</div>
               <h2 className="text-xl font-game tracking-tight">AI Game Coach</h2>
             </div>
-
             <div className="flex-1 z-10 flex flex-col justify-center">
-              {gameStatus === 'paused' ? (
-                <p className="text-indigo-200 text-center italic">
-                  "I'm taking a break too! Resume the game when you're ready for more strategies."
-                </p>
+              {gameStatus === 'game-over' ? (
+                <p className="text-indigo-200 text-center italic">"Close one! A slightly different swap might have saved the day. Let's try once more!"</p>
               ) : isAiThinking ? (
                 <div className="space-y-4">
                   <div className="h-4 bg-white/10 rounded animate-pulse w-full" />
                   <div className="h-4 bg-white/10 rounded animate-pulse w-3/4" />
-                  <div className="h-4 bg-white/10 rounded animate-pulse w-5/6" />
                 </div>
               ) : lastHint ? (
                 <div className="animate-fade-in">
-                  <p className="text-indigo-100 italic leading-relaxed mb-4">
-                    "{lastHint.explanation}"
-                  </p>
-                  <div className="bg-white/10 rounded-2xl p-4 border border-white/20">
-                    <p className="text-xs uppercase font-bold text-indigo-200 mb-1">Recommended Move</p>
-                    <p className="font-semibold text-sm">
-                      Swap ({lastHint.from.row}, {lastHint.from.col}) with ({lastHint.to.row}, {lastHint.to.col})
-                    </p>
-                  </div>
+                  <p className="text-indigo-100 italic leading-relaxed mb-4">"{lastHint.explanation}"</p>
                 </div>
               ) : (
-                <p className="text-indigo-200 text-center italic">
-                  "I'm analyzing the board... Level {currentLevel.id} is a bit tougher! Need a hint?"
-                </p>
+                <p className="text-indigo-200 text-center italic">"I'm analyzing the board... Level {currentLevel.id} is a bit tougher! Need a hint?"</p>
               )}
-            </div>
-
-            <div className="mt-6 pt-6 border-t border-white/10 z-10 text-xs text-indigo-300 font-bold uppercase tracking-widest text-center">
-              Strategy Support Active
             </div>
           </div>
         </div>

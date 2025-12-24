@@ -82,6 +82,52 @@
         .animate-rainbow {
             animation: rainbow-glow 3s linear infinite;
         }
+        @keyframes beam-h {
+            0% { transform: scaleX(0); opacity: 0; }
+            20% { opacity: 1; }
+            50% { transform: scaleX(1); opacity: 1; }
+            100% { transform: scaleX(1); opacity: 0; }
+        }
+        @keyframes beam-v {
+            0% { transform: scaleY(0); opacity: 0; }
+            20% { opacity: 1; }
+            50% { transform: scaleY(1); opacity: 1; }
+            100% { transform: scaleY(1); opacity: 0; }
+        }
+        .animate-beam-h {
+            animation: beam-h 0.5s ease-out forwards;
+        }
+        .animate-beam-v {
+            animation: beam-v 0.5s ease-out forwards;
+        }
+        @keyframes game-over-drop {
+            0% { transform: translateY(-100vh) rotate(-15deg); opacity: 0; }
+            60% { transform: translateY(10%) rotate(5deg); opacity: 1; }
+            80% { transform: translateY(-5%) rotate(-2deg); }
+            100% { transform: translateY(0) rotate(0); opacity: 1; }
+        }
+        .animate-game-over {
+            animation: game-over-drop 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+        @keyframes board-desaturate {
+            from { filter: saturate(1) blur(0); }
+            to { filter: saturate(0.2) blur(2px) brightness(0.7); }
+        }
+        .board-lost {
+            animation: board-desaturate 1.5s forwards;
+            pointer-events: none;
+        }
+        @keyframes shimmer {
+            0% { background-position: -200% 0; }
+            100% { background-position: 200% 0; }
+        }
+        .shimmer-text {
+            background: linear-gradient(90deg, #6b7280 25%, #f3f4f6 50%, #6b7280 75%);
+            background-size: 200% auto;
+            color: transparent;
+            -webkit-background-clip: text;
+            animation: shimmer 2s infinite linear;
+        }
     </style>
 <script type="importmap">
 {

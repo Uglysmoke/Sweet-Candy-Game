@@ -30,6 +30,12 @@ interface FloatingScore {
   y: number;
 }
 
+interface ActiveBeam {
+  id: number;
+  type: 'h' | 'v';
+  index: number;
+}
+
 export const Board: React.FC<BoardProps> = ({ 
   onScore, 
   onMove, 
@@ -48,12 +54,14 @@ export const Board: React.FC<BoardProps> = ({
   const [showCombo, setShowCombo] = useState(false);
   const [floatingScores, setFloatingScores] = useState<FloatingScore[]>([]);
   const [isShaking, setIsShaking] = useState(false);
+  const [activeBeams, setActiveBeams] = useState<ActiveBeam[]>([]);
 
   const [streak, setStreak] = useState(1);
   const [streakProgress, setStreakProgress] = useState(0);
   
   const lastMoveTargetRef = useRef<Position | null>(null);
   const nextFloatingId = useRef(0);
+  const nextBeamId = useRef(0);
 
   // Update board if initialBoard changes (e.g. on load)
   useEffect(() => {
@@ -105,6 +113,26 @@ export const Board: React.FC<BoardProps> = ({
     setTimeout(() => setFloatingScores(prev => prev.filter(s => s.id !== id)), 1000);
   };
 
+  const triggerStripeBeams = useCallback((matches: Position[], currentBoard: BoardType) => {
+    const beams: ActiveBeam[] = [];
+    matches.forEach(p => {
+      const candy = currentBoard[p.row][p.col];
+      if (candy?.type === CandyType.STRIPE_H) {
+        beams.push({ id: nextBeamId.current++, type: 'h', index: p.row });
+      } else if (candy?.type === CandyType.STRIPE_V) {
+        beams.push({ id: nextBeamId.current++, type: 'v', index: p.col });
+      }
+    });
+
+    if (beams.length > 0) {
+      setActiveBeams(prev => [...prev, ...beams]);
+      setTimeout(() => {
+        const beamIds = new Set(beams.map(b => b.id));
+        setActiveBeams(prev => prev.filter(b => !beamIds.has(b.id)));
+      }, 600);
+    }
+  }, []);
+
   const processBoard = useCallback(async (currentBoard: BoardType) => {
     setIsProcessing(true);
     let tempBoard = JSON.parse(JSON.stringify(currentBoard));
@@ -120,6 +148,9 @@ export const Board: React.FC<BoardProps> = ({
       
       if (matches.length === 0) break;
       anyMatchesMade = true;
+
+      // Trigger stripe visual effects
+      triggerStripeBeams(matches, tempBoard);
 
       if (currentMultiplier >= 3) {
         setIsShaking(true);
@@ -165,7 +196,7 @@ export const Board: React.FC<BoardProps> = ({
     setIsProcessing(false);
     lastMoveTargetRef.current = null;
     setTimeout(() => { setShowCombo(false); setCombo(1); }, 1200);
-  }, [onScore, streak]);
+  }, [onScore, streak, triggerStripeBeams]);
 
   const handlePieceClick = async (row: number, col: number) => {
     if (isProcessing || gameStatus !== 'playing') return;
@@ -221,6 +252,9 @@ export const Board: React.FC<BoardProps> = ({
           }
           targetPositions.push(colorBombPos);
         }
+
+        // Trigger beams for stripes if involved in Color Bomb swap
+        triggerStripeBeams(targetPositions, newBoard);
 
         audioService.playSpecial();
         setMatchedPositions(targetPositions);
@@ -340,6 +374,20 @@ export const Board: React.FC<BoardProps> = ({
             >
               +{fs.score}{fs.multiplier > 1 ? ` x${fs.multiplier.toFixed(1)}` : ''}
             </div>
+          ))}
+
+          {activeBeams.map(beam => (
+            <div 
+              key={beam.id}
+              className={`absolute pointer-events-none z-10 ${
+                beam.type === 'h' ? 'h-12 w-full left-0 animate-beam-h bg-white/40 shadow-[0_0_20px_white]' : 'w-12 h-full top-0 animate-beam-v bg-white/40 shadow-[0_0_20px_white]'
+              }`}
+              style={{ 
+                top: beam.type === 'h' ? `${beam.index * 12.5 + 6.25}%` : 0,
+                left: beam.type === 'v' ? `${beam.index * 12.5 + 6.25}%` : 0,
+                transform: beam.type === 'h' ? 'translateY(-50%)' : 'translateX(-50%)'
+              }}
+            />
           ))}
         </div>
 

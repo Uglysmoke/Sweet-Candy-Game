@@ -98,6 +98,26 @@ class AudioService {
       osc.stop(now + i * 0.1 + 0.4);
     });
   }
+
+  playGameOver() {
+    if (this.muted) return;
+    this.init();
+    const now = this.ctx!.currentTime;
+    const notes = [392.00, 349.23, 329.63, 261.63]; // G4, F4, E4, C4 (Descending)
+    notes.forEach((freq, i) => {
+      const osc = this.ctx!.createOscillator();
+      const gain = this.ctx!.createGain();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(freq, now + i * 0.2);
+      gain.gain.setValueAtTime(0, now + i * 0.2);
+      gain.gain.linearRampToValueAtTime(0.05, now + i * 0.2 + 0.05);
+      gain.gain.linearRampToValueAtTime(0, now + i * 0.2 + 0.5);
+      osc.connect(gain);
+      gain.connect(this.ctx!.destination);
+      osc.start(now + i * 0.2);
+      osc.stop(now + i * 0.2 + 0.6);
+    });
+  }
 }
 
 export const audioService = new AudioService();
