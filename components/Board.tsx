@@ -1,26 +1,33 @@
 
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { BoardType, Position, MoveHint, GameStatus, CandyType, CandyColor } from '../types';
+import React, { useState, useEffect, useCallback, useRef, useImperativeHandle, forwardRef } from 'react';
+import { BoardType, Position, MoveHint, GameStatus, CandyType, CandyColor, Candy, PowerupType } from '../types';
 import { generateBoard, checkMatches, applyGravity, isAdjacent, createCandy } from '../services/gameLogic';
 import { CandyPiece } from './CandyPiece';
 import { getGameHint } from '../services/geminiService';
 import { audioService } from '../services/audioService';
-import { GRID_SIZE } from '../constants';
+import { GRID_SIZE, CANDY_COLORS } from '../constants';
 
 const SAVE_KEY = 'sweet_crush_save_data';
 
 interface BoardProps {
-  onScore: (points: number) => void;
+  onScore: (points: number, clearedCandies: Candy[]) => void;
   onMove: () => void;
   onHintReceived: (hint: MoveHint | null) => void;
   isAiThinking: boolean;
   setIsAiThinking: (val: boolean) => void;
   gameStatus: GameStatus;
   initialBoard: BoardType | null;
-  key?: number | string; // Used to force reset board on level change
+  levelId: number;
+  activePowerup: PowerupType | null;
+  onUsePowerup: (type: PowerupType) => void;
 }
 
-const STREAK_DURATION = 7000; // 7 seconds
+export interface BoardRef {
+  triggerUfo: () => Promise<void>;
+  triggerPartyBooster: () => Promise<void>;
+}
+
+const STREAK_DURATION = 7000;
 
 interface FloatingScore {
   id: number;
@@ -36,16 +43,19 @@ interface ActiveBeam {
   index: number;
 }
 
-export const Board: React.FC<BoardProps> = ({ 
+export const Board = forwardRef<BoardRef, BoardProps>(({ 
   onScore, 
   onMove, 
   onHintReceived, 
   isAiThinking, 
   setIsAiThinking, 
   gameStatus,
-  initialBoard 
-}) => {
-  const [board, setBoard] = useState<BoardType>(() => initialBoard || generateBoard());
+  initialBoard,
+  levelId,
+  activePowerup,
+  onUsePowerup
+}, ref) => {
+  const [board, setBoard] = useState<BoardType>(() => initialBoard || generateBoard(levelId));
   const [selected, setSelected] = useState<Position | null>(null);
   const [matchedPositions, setMatchedPositions] = useState<Position[]>([]);
   const [currentHint, setCurrentHint] = useState<MoveHint | null>(null);
@@ -63,14 +73,23 @@ export const Board: React.FC<BoardProps> = ({
   const nextFloatingId = useRef(0);
   const nextBeamId = useRef(0);
 
-  // Update board if initialBoard changes (e.g. on load)
+  useImperativeHandle(ref, () => ({
+    triggerUfo: async () => {
+      await handleUfo();
+    },
+    triggerPartyBooster: async () => {
+      await handlePartyBooster();
+    }
+  }));
+
   useEffect(() => {
     if (initialBoard) {
       setBoard(initialBoard);
+    } else {
+      setBoard(generateBoard(levelId));
     }
-  }, [initialBoard]);
+  }, [initialBoard, levelId]);
 
-  // Save board whenever it changes
   useEffect(() => {
     const existing = localStorage.getItem(SAVE_KEY);
     const data = existing ? JSON.parse(existing) : {};
@@ -79,16 +98,6 @@ export const Board: React.FC<BoardProps> = ({
   }, [board]);
 
   useEffect(() => {
-    // Streak reset logic on start
-    setCombo(1);
-    setShowCombo(false);
-    setFloatingScores([]);
-    setStreak(1);
-    setStreakProgress(0);
-  }, []);
-
-  useEffect(() => {
-    // Halt streak decay if paused or processing matches
     if (streak > 1 && !isProcessing && gameStatus === 'playing') {
       const interval = setInterval(() => {
         setStreakProgress(prev => {
@@ -116,7 +125,7 @@ export const Board: React.FC<BoardProps> = ({
   const triggerStripeBeams = useCallback((matches: Position[], currentBoard: BoardType) => {
     const beams: ActiveBeam[] = [];
     matches.forEach(p => {
-      const candy = currentBoard[p.row][p.col];
+      const candy = currentBoard[p.row] ? currentBoard[p.row][p.col] : null;
       if (candy?.type === CandyType.STRIPE_H) {
         beams.push({ id: nextBeamId.current++, type: 'h', index: p.row });
       } else if (candy?.type === CandyType.STRIPE_V) {
@@ -133,6 +142,23 @@ export const Board: React.FC<BoardProps> = ({
     }
   }, []);
 
+  const getMatchBoundingBox = (matches: Position[]) => {
+    if (matches.length === 0) return null;
+    let minR = GRID_SIZE, maxR = 0, minC = GRID_SIZE, maxC = 0;
+    matches.forEach(p => {
+      minR = Math.min(minR, p.row);
+      maxR = Math.max(maxR, p.row);
+      minC = Math.min(minC, p.col);
+      maxC = Math.max(maxC, p.col);
+    });
+    return {
+      top: `${minR * 12.5}%`,
+      left: `${minC * 12.5}%`,
+      width: `${(maxC - minC + 1) * 12.5}%`,
+      height: `${(maxR - minR + 1) * 12.5}%`,
+    };
+  };
+
   const processBoard = useCallback(async (currentBoard: BoardType) => {
     setIsProcessing(true);
     let tempBoard = JSON.parse(JSON.stringify(currentBoard));
@@ -141,15 +167,14 @@ export const Board: React.FC<BoardProps> = ({
     let anyMatchesMade = false;
     
     while (true) {
-      const { matchedPositions: matches, specialsToSpawn } = checkMatches(
+      const { matchedPositions: matches, damagedPositions: damaged, specialsToSpawn } = checkMatches(
         tempBoard, 
         isFirstIteration ? lastMoveTargetRef.current || undefined : undefined
       );
       
-      if (matches.length === 0) break;
+      if (matches.length === 0 && damaged.length === 0) break;
       anyMatchesMade = true;
 
-      // Trigger stripe visual effects
       triggerStripeBeams(matches, tempBoard);
 
       if (currentMultiplier >= 3) {
@@ -157,24 +182,59 @@ export const Board: React.FC<BoardProps> = ({
         setTimeout(() => setIsShaking(false), 300);
       }
 
-      const activatedSpecials = matches.some(m => tempBoard[m.row][m.col]?.type !== CandyType.REGULAR);
+      const activatedSpecials = matches.some(m => tempBoard[m.row]?.[m.col]?.type !== CandyType.REGULAR);
       if (activatedSpecials) audioService.playSpecial();
       else audioService.playMatch();
 
       setCombo(currentMultiplier);
       if (currentMultiplier > 1) setShowCombo(true);
       
-      setMatchedPositions(matches);
+      setMatchedPositions([...matches, ...damaged]);
       const streakMultiplier = 1 + (streak - 1) * 0.5;
-      const pointsBase = matches.length * 10;
+      const pointsBase = matches.length * 10 + damaged.length * 20;
       const finalPoints = Math.round(pointsBase * currentMultiplier * streakMultiplier);
       
-      onScore(finalPoints);
-      addFloatingScore(pointsBase, currentMultiplier * streakMultiplier, matches);
+      const clearedForGoals: Candy[] = [];
+      const actualClearedMatches: Position[] = [];
+      matches.forEach(p => {
+        const c = tempBoard[p.row]?.[p.col];
+        if (c && (c.type === CandyType.JELLY)) {
+          c.health = (c.health || 1) - 1;
+          if (c.health <= 0) {
+            clearedForGoals.push({ ...c });
+            actualClearedMatches.push(p);
+          }
+        } else if (c) {
+          clearedForGoals.push({ ...c });
+          actualClearedMatches.push(p);
+        }
+      });
+
+      const actualClearedDamaged: Position[] = [];
+      damaged.forEach(p => {
+        const c = tempBoard[p.row]?.[p.col];
+        if (c && c.type === CandyType.ROCK) {
+          c.health = (c.health || 1) - 1;
+          if (c.health <= 0) {
+            clearedForGoals.push({ ...c });
+            actualClearedDamaged.push(p);
+          }
+        }
+      });
+
+      onScore(finalPoints, clearedForGoals);
+      addFloatingScore(pointsBase, currentMultiplier * streakMultiplier, [...matches, ...damaged]);
       
       await new Promise(r => setTimeout(r, 450));
-      matches.forEach(p => { tempBoard[p.row][p.col] = null; });
-      specialsToSpawn.forEach(s => { tempBoard[s.pos.row][s.pos.col] = createCandy(s.color, s.type); });
+      
+      actualClearedMatches.forEach(p => { if (tempBoard[p.row]) tempBoard[p.row][p.col] = null; });
+      actualClearedDamaged.forEach(p => { if (tempBoard[p.row]) tempBoard[p.row][p.col] = null; });
+      
+      specialsToSpawn.forEach(s => { 
+        if (tempBoard[s.pos.row] && tempBoard[s.pos.row][s.pos.col] === null) {
+          tempBoard[s.pos.row][s.pos.col] = createCandy(s.color, s.type); 
+        }
+      });
 
       setBoard([...tempBoard]);
       setMatchedPositions([]);
@@ -198,8 +258,237 @@ export const Board: React.FC<BoardProps> = ({
     setTimeout(() => { setShowCombo(false); setCombo(1); }, 1200);
   }, [onScore, streak, triggerStripeBeams]);
 
+  const executeSpecialCombo = async (p1: Position, p2: Position, b: BoardType) => {
+    const c1 = b[p1.row]?.[p1.col];
+    const c2 = b[p2.row]?.[p2.col];
+    if (!c1 || !c2) return;
+
+    onMove();
+    setIsProcessing(true);
+    let targetPositions: Position[] = [];
+    const newBoard: BoardType = JSON.parse(JSON.stringify(b));
+
+    const types = [c1.type, c2.type];
+
+    if (types.filter(t => t === CandyType.COLOR_BOMB).length === 2) {
+      audioService.playSpecial();
+      setIsShaking(true);
+      for (let r = 0; r < GRID_SIZE; r++) {
+        for (let c = 0; c < GRID_SIZE; c++) targetPositions.push({ row: r, col: c });
+      }
+    } 
+    else if (types.includes(CandyType.COLOR_BOMB)) {
+      const other = c1.type === CandyType.COLOR_BOMB ? c2 : c1;
+      const targetColor = other.color;
+      
+      if (other.type === CandyType.BOMB) {
+        for (let r = 0; r < GRID_SIZE; r++) {
+          for (let c = 0; c < GRID_SIZE; c++) {
+            if (newBoard[r]?.[c]?.color === targetColor) {
+              newBoard[r][c] = createCandy(targetColor, CandyType.BOMB);
+              targetPositions.push({ row: r, col: c });
+            }
+          }
+        }
+      } else if (other.type === CandyType.STRIPE_H || other.type === CandyType.STRIPE_V) {
+        for (let r = 0; r < GRID_SIZE; r++) {
+          for (let c = 0; c < GRID_SIZE; c++) {
+            if (newBoard[r]?.[c]?.color === targetColor) {
+              const type = Math.random() > 0.5 ? CandyType.STRIPE_H : CandyType.STRIPE_V;
+              newBoard[r][c] = createCandy(targetColor, type);
+              targetPositions.push({ row: r, col: c });
+            }
+          }
+        }
+      } else {
+        for (let r = 0; r < GRID_SIZE; r++) {
+          for (let c = 0; c < GRID_SIZE; c++) {
+            if (newBoard[r]?.[c]?.color === targetColor) targetPositions.push({ row: r, col: c });
+          }
+        }
+      }
+      targetPositions.push(c1.type === CandyType.COLOR_BOMB ? p1 : p2);
+    }
+    else if (types.filter(t => t === CandyType.BOMB).length === 2) {
+      audioService.playSpecial();
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          const r = p2.row + dr, c = p2.col + dc;
+          if (r >= 0 && r < GRID_SIZE && c >= 0 && c < GRID_SIZE) targetPositions.push({ row: r, col: c });
+        }
+      }
+    }
+    else if (types.includes(CandyType.BOMB) && (types.includes(CandyType.STRIPE_H) || types.includes(CandyType.STRIPE_V))) {
+      audioService.playSpecial();
+      for (let i = -1; i <= 1; i++) {
+        for (let j = 0; j < GRID_SIZE; j++) {
+          const r1 = p2.row + i;
+          if (r1 >= 0 && r1 < GRID_SIZE) targetPositions.push({ row: r1, col: j });
+          const c1 = p2.col + i;
+          if (c1 >= 0 && c1 < GRID_SIZE) targetPositions.push({ row: j, col: c1 });
+        }
+      }
+    }
+    else if ((c1.type === CandyType.STRIPE_H || c1.type === CandyType.STRIPE_V) && (c2.type === CandyType.STRIPE_H || c2.type === CandyType.STRIPE_V)) {
+      audioService.playSpecial();
+      for (let i = 0; i < GRID_SIZE; i++) {
+        targetPositions.push({ row: p2.row, col: i });
+        targetPositions.push({ row: i, col: p2.col });
+      }
+    }
+
+    if (targetPositions.length > 0) {
+      setMatchedPositions(targetPositions);
+      audioService.playSpecial();
+      
+      if (targetPositions.length > 30) {
+        setIsShaking(true);
+        setTimeout(() => setIsShaking(false), 800);
+      }
+
+      await new Promise(r => setTimeout(r, 600));
+
+      const { matchedPositions: additional } = checkMatches(newBoard);
+      const allToClear = Array.from(new Set([...targetPositions.map(p => `${p.row}-${p.col}`), ...additional.map(p => `${p.row}-${p.col}`)]))
+        .map(s => { const [r, c] = s.split('-').map(Number); return { row: r, col: c }; });
+
+      const clearedForGoals: Candy[] = [];
+      allToClear.forEach(p => {
+        const c = newBoard[p.row] ? newBoard[p.row][p.col] : null;
+        if (c && c.type !== CandyType.ROCK) {
+          clearedForGoals.push({ ...c });
+          newBoard[p.row][p.col] = null;
+        }
+      });
+
+      const baseScore = allToClear.length * 25;
+      onScore(baseScore, clearedForGoals);
+      addFloatingScore(baseScore, 1, allToClear);
+
+      setBoard([...newBoard]);
+      setMatchedPositions([]);
+      const { newBoard: gravityBoard } = applyGravity(newBoard);
+      setBoard(gravityBoard);
+      setSelected(null);
+      setStreak(prev => Math.min(prev + 1, 10));
+      setStreakProgress(100);
+      processBoard(gravityBoard);
+    }
+  };
+
+  const handleLollipopHammer = async (row: number, col: number) => {
+    const candy = board[row][col];
+    if (!candy) return;
+    
+    setIsProcessing(true);
+    audioService.playSpecial();
+    setIsShaking(true);
+    setTimeout(() => setIsShaking(false), 200);
+
+    let tempBoard = JSON.parse(JSON.stringify(board));
+    const target = tempBoard[row][col];
+    const cleared: Candy[] = [];
+
+    if (target.health && target.health > 1) {
+      target.health -= 1;
+    } else {
+      cleared.push({ ...target });
+      tempBoard[row][col] = null;
+    }
+
+    onScore(150, cleared);
+    setBoard(tempBoard);
+    onUsePowerup(PowerupType.LOLLIPOP_HAMMER);
+
+    await new Promise(r => setTimeout(r, 300));
+    const { newBoard: gravityBoard } = applyGravity(tempBoard);
+    setBoard(gravityBoard);
+    processBoard(gravityBoard);
+  };
+
+  const handleUfo = async () => {
+    setIsProcessing(true);
+    audioService.playSpecial();
+    
+    let tempBoard = JSON.parse(JSON.stringify(board));
+    const targetPositions: Position[] = [];
+    
+    // Spawn 3 special candies randomly
+    for (let i = 0; i < 3; i++) {
+      let r, c;
+      let attempts = 0;
+      do {
+        r = Math.floor(Math.random() * GRID_SIZE);
+        c = Math.floor(Math.random() * GRID_SIZE);
+        attempts++;
+      } while ((!tempBoard[r][c] || tempBoard[r][c].type !== CandyType.REGULAR) && attempts < 50);
+      
+      const type = Math.random() > 0.5 ? CandyType.STRIPE_H : CandyType.STRIPE_V;
+      tempBoard[r][c] = createCandy(tempBoard[r][c]?.color || CANDY_COLORS[0], type);
+      targetPositions.push({ row: r, col: c });
+    }
+
+    setMatchedPositions(targetPositions);
+    setBoard(tempBoard);
+    onUsePowerup(PowerupType.UFO);
+    
+    await new Promise(r => setTimeout(r, 600));
+    setMatchedPositions([]);
+    processBoard(tempBoard);
+  };
+
+  const handlePartyBooster = async () => {
+    setIsProcessing(true);
+    audioService.playSpecial();
+    setIsShaking(true);
+    setTimeout(() => setIsShaking(false), 800);
+
+    let tempBoard = JSON.parse(JSON.stringify(board));
+    const randomColor = CANDY_COLORS[Math.floor(Math.random() * CANDY_COLORS.length)];
+    const cleared: Candy[] = [];
+    const matched: Position[] = [];
+
+    // Clear all of one color and spawn 4 specials
+    for (let r = 0; r < GRID_SIZE; r++) {
+      for (let c = 0; c < GRID_SIZE; c++) {
+        if (tempBoard[r][c]?.color === randomColor) {
+          cleared.push({ ...tempBoard[r][c] });
+          matched.push({ row: r, col: c });
+          tempBoard[r][c] = null;
+        }
+      }
+    }
+
+    // Spawn 4 specials in place of some cleared ones
+    for (let i = 0; i < 4; i++) {
+       const posIdx = Math.floor(Math.random() * matched.length);
+       const pos = matched[posIdx];
+       const types = [CandyType.BOMB, CandyType.COLOR_BOMB, CandyType.STRIPE_H, CandyType.STRIPE_V];
+       tempBoard[pos.row][pos.col] = createCandy(randomColor, types[i % types.length]);
+    }
+
+    setMatchedPositions(matched);
+    onScore(cleared.length * 100, cleared);
+    setBoard(tempBoard);
+    onUsePowerup(PowerupType.PARTY_BOOSTER);
+
+    await new Promise(r => setTimeout(r, 800));
+    setMatchedPositions([]);
+    const { newBoard: gravityBoard } = applyGravity(tempBoard);
+    setBoard(gravityBoard);
+    processBoard(gravityBoard);
+  };
+
   const handlePieceClick = async (row: number, col: number) => {
     if (isProcessing || gameStatus !== 'playing') return;
+
+    if (activePowerup === PowerupType.LOLLIPOP_HAMMER) {
+      await handleLollipopHammer(row, col);
+      return;
+    }
+
+    const currentCandy = board[row] ? board[row][col] : null;
+    if (currentCandy?.type === CandyType.ROCK) return;
 
     if (!selected) {
       setSelected({ row, col });
@@ -215,74 +504,36 @@ export const Board: React.FC<BoardProps> = ({
     }
 
     if (isAdjacent(first, second)) {
-      audioService.playSwap();
-      const newBoard: BoardType = JSON.parse(JSON.stringify(board));
-      const candy1 = newBoard[first.row][first.col];
-      const candy2 = newBoard[second.row][second.col];
-      
+      const candy1 = board[first.row] ? board[first.row][first.col] : null;
+      const candy2 = board[second.row] ? board[second.row][second.col] : null;
       if (!candy1 || !candy2) return;
 
-      if (candy1.type === CandyType.COLOR_BOMB || candy2.type === CandyType.COLOR_BOMB) {
-        onMove();
-        const otherCandy = candy1.type === CandyType.COLOR_BOMB ? candy2 : candy1;
-        const colorBombPos = candy1.type === CandyType.COLOR_BOMB ? first : second;
-        
-        let targetPositions: Position[] = [];
-        
-        if (otherCandy.type === CandyType.COLOR_BOMB) {
-          audioService.playSpecial();
-          setIsShaking(true);
-          setTimeout(() => setIsShaking(false), 500);
-          for (let r = 0; r < GRID_SIZE; r++) {
-            for (let c = 0; c < GRID_SIZE; c++) targetPositions.push({ row: r, col: c });
-          }
-        } else {
-          const targetColor = otherCandy.color;
-          const upgradeType = otherCandy.type;
-
-          for (let r = 0; r < GRID_SIZE; r++) {
-            for (let c = 0; c < GRID_SIZE; c++) {
-              if (newBoard[r][c]?.color === targetColor) {
-                if (upgradeType !== CandyType.REGULAR) {
-                  newBoard[r][c] = { ...newBoard[r][c]!, type: upgradeType };
-                }
-                targetPositions.push({ row: r, col: c });
-              }
-            }
-          }
-          targetPositions.push(colorBombPos);
-        }
-
-        // Trigger beams for stripes if involved in Color Bomb swap
-        triggerStripeBeams(targetPositions, newBoard);
-
-        audioService.playSpecial();
-        setMatchedPositions(targetPositions);
-        
-        const streakMultiplier = 1 + (streak - 1) * 0.5;
-        const baseScore = targetPositions.length * 20;
-        onScore(Math.round(baseScore * streakMultiplier));
-        addFloatingScore(baseScore, streakMultiplier, targetPositions);
-        
-        await new Promise(r => setTimeout(r, 600));
-
-        const finalMatches = checkMatches(newBoard).matchedPositions;
-        const combinedMatches = Array.from(new Set([...targetPositions.map(p => `${p.row}-${p.col}`), ...finalMatches.map(p => `${p.row}-${p.col}`)]))
-          .map(s => { const [r, c] = s.split('-').map(Number); return { row: r, col: c }; });
-
-        combinedMatches.forEach(p => { newBoard[p.row][p.col] = null; });
-        
-        setBoard([...newBoard]);
-        setMatchedPositions([]);
-        const { newBoard: gravityBoard } = applyGravity(newBoard);
-        setBoard(gravityBoard);
+      if (activePowerup === PowerupType.FREE_SWITCH) {
+        audioService.playSwap();
+        const newBoard: BoardType = JSON.parse(JSON.stringify(board));
+        newBoard[first.row][first.col] = candy2;
+        newBoard[second.row][second.col] = candy1;
+        setBoard(newBoard);
         setSelected(null);
-        setStreak(prev => Math.min(prev + 1, 10));
-        setStreakProgress(100);
-        processBoard(gravityBoard);
+        onUsePowerup(PowerupType.FREE_SWITCH);
+        processBoard(newBoard);
         return;
       }
 
+      const isAnySpecial = (c: Candy) => c.type !== CandyType.REGULAR && c.type !== CandyType.JELLY && c.type !== CandyType.ROCK;
+      
+      if (isAnySpecial(candy1) && isAnySpecial(candy2)) {
+        await executeSpecialCombo(first, second, board);
+        return;
+      }
+      
+      if (candy1.type === CandyType.COLOR_BOMB || candy2.type === CandyType.COLOR_BOMB) {
+        await executeSpecialCombo(first, second, board);
+        return;
+      }
+
+      audioService.playSwap();
+      const newBoard: BoardType = JSON.parse(JSON.stringify(board));
       newBoard[first.row][first.col] = candy2;
       newBoard[second.row][second.col] = candy1;
 
@@ -329,6 +580,8 @@ export const Board: React.FC<BoardProps> = ({
     return "DIVINE!";
   };
 
+  const matchBox = getMatchBoundingBox(matchedPositions);
+
   return (
     <div className="flex flex-col items-center gap-6 relative">
       <div className={`w-full max-w-sm transition-all duration-500 ${streak > 1 ? 'opacity-100' : 'opacity-0 scale-95'}`}>
@@ -352,7 +605,7 @@ export const Board: React.FC<BoardProps> = ({
         <div className="absolute top-12 left-1/2 -translate-x-1/2 z-30 animate-combo pointer-events-none">
           <div className={`
             bg-gradient-to-r ${getComboGradient()} text-white px-8 py-3 rounded-full font-game text-3xl shadow-2xl ring-4 ring-white
-            ${combo >= 5 ? 'combo-glow scale-110' : ''}
+            ${combo >= 3 ? 'combo-glow scale-110' : ''}
           `}>
             {combo >= 5 ? 'SUPER ' : ''}COMBO x{combo}
           </div>
@@ -364,7 +617,14 @@ export const Board: React.FC<BoardProps> = ({
         ${gameStatus !== 'playing' ? 'opacity-50 pointer-events-none' : 'opacity-100'}
         ${isShaking ? 'animate-shake' : ''}
         ${streak > 4 ? 'ring-4 ring-orange-400' : ''}
+        ${activePowerup ? 'ring-4 ring-yellow-400 animate-pulse' : ''}
       `}>
+        {activePowerup && (
+          <div className="absolute -top-12 left-1/2 -translate-x-1/2 z-50 bg-yellow-400 text-pink-900 font-game px-6 py-2 rounded-full shadow-lg border-2 border-white animate-bounce whitespace-nowrap">
+            USE {activePowerup.replace(/_/g, ' ').toUpperCase()}
+          </div>
+        )}
+
         <div className="absolute inset-0 z-20 pointer-events-none overflow-hidden">
           {floatingScores.map(fs => (
             <div 
@@ -389,6 +649,13 @@ export const Board: React.FC<BoardProps> = ({
               }}
             />
           ))}
+
+          {combo >= 3 && matchBox && (
+            <div 
+              className="absolute border-4 border-white/60 rounded-2xl animate-match-glow z-10 bg-white/10"
+              style={{ ...matchBox }}
+            />
+          )}
         </div>
 
         <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(8, minmax(0, 1fr))' }}>
@@ -426,4 +693,4 @@ export const Board: React.FC<BoardProps> = ({
       </button>
     </div>
   );
-};
+});
