@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { CandyColor, LevelConfig, CandyType, GoalType, PreGameBoosterType } from './types';
+import { CandyColor, LevelConfig, CandyType, GoalType, PreGameBoosterType, LevelGoal } from './types';
 
 export const GRID_SIZE = 8;
 
@@ -22,97 +22,65 @@ export const PRE_GAME_BOOSTERS_CONFIG = [
   { type: PreGameBoosterType.EXTRA_MOVES, icon: '➕', label: 'Extra Moves', desc: '+3 moves for the level' },
 ];
 
-export const LEVELS: LevelConfig[] = [
-  { 
-    id: 1, 
-    title: "1", 
-    targetScore: 500, 
-    moves: 25,
-    goals: [
-      { type: GoalType.COLLECT_COLOR, target: CandyColor.RED, count: 15 }
-    ]
-  },
-  { 
-    id: 2, 
-    title: "2", 
-    targetScore: 1200, 
-    moves: 20,
-    goals: [
-      { type: GoalType.COLLECT_COLOR, target: CandyColor.BLUE, count: 20 },
-      { type: GoalType.COLLECT_COLOR, target: CandyColor.GREEN, count: 20 }
-    ]
-  },
-  { 
-    id: 3, 
-    title: "3", 
-    targetScore: 2500, 
-    moves: 18,
-    goals: [
-      { type: GoalType.COLLECT_TYPE, target: CandyType.STRIPE_H, count: 3 },
-      { type: GoalType.COLLECT_TYPE, target: CandyType.STRIPE_V, count: 3 }
-    ]
-  },
-  { 
-    id: 4, 
-    title: "4", 
-    targetScore: 4000, 
-    moves: 15,
-    goals: [
-      { type: GoalType.COLLECT_COLOR, target: CandyColor.PURPLE, count: 30 },
-      { type: GoalType.COLLECT_TYPE, target: CandyType.BOMB, count: 2 }
-    ]
-  },
-  { 
-    id: 5, 
-    title: "5", 
-    targetScore: 6000, 
-    moves: 12,
-    goals: [
-      { type: GoalType.COLLECT_TYPE, target: CandyType.COLOR_BOMB, count: 2 },
-      { type: GoalType.COLLECT_COLOR, target: CandyColor.ORANGE, count: 40 }
-    ]
-  },
-  { 
-    id: 6, 
-    title: "6", 
-    targetScore: 8000, 
-    moves: 20,
-    goals: [
-      { type: GoalType.COLLECT_COLOR, target: CandyColor.YELLOW, count: 50 },
-      { type: GoalType.COLLECT_TYPE, target: CandyType.STRIPE_H, count: 5 }
-    ]
-  },
-  { 
-    id: 7, 
-    title: "7", 
-    targetScore: 10000, 
-    moves: 15,
-    goals: [
-      { type: GoalType.COLLECT_TYPE, target: CandyType.BOMB, count: 4 },
-      { type: GoalType.COLLECT_TYPE, target: CandyType.COLOR_BOMB, count: 1 }
-    ]
-  },
-  { 
-    id: 8, 
-    title: "8", 
-    targetScore: 12000, 
-    moves: 20,
-    goals: [
-      { type: GoalType.COLLECT_TYPE, target: CandyType.ROCK, count: 6 },
-      { type: GoalType.COLLECT_COLOR, target: CandyColor.BLUE, count: 30 }
-    ]
-  },
-  { 
-    id: 9, 
-    title: "9", 
-    targetScore: 15000, 
-    moves: 18,
-    goals: [
-      { type: GoalType.COLLECT_TYPE, target: CandyType.JELLY, count: 10 },
-      { type: GoalType.COLLECT_TYPE, target: CandyType.BOMB, count: 3 }
-    ]
+// Generate 2000 levels programmatically
+const generateLevels = (): LevelConfig[] => {
+  const levels: LevelConfig[] = [];
+  for (let i = 1; i <= 2000; i++) {
+    const isHard = i % 5 === 0;
+    const isBoss = i % 50 === 0;
+    
+    let moves = Math.max(8, 25 - Math.floor(i / 100));
+    if (isHard) moves = Math.max(6, Math.floor(moves * 0.7));
+    if (isBoss) moves = Math.max(5, Math.floor(moves * 0.5));
+
+    let targetScore = i * 500 + (isHard ? 2000 : 500);
+    if (isBoss) targetScore *= 2;
+
+    const goals: LevelGoal[] = [];
+    
+    // Primary color goal
+    const colorIdx = (i - 1) % CANDY_COLORS.length;
+    goals.push({ 
+      type: GoalType.COLLECT_COLOR, 
+      target: CANDY_COLORS[colorIdx], 
+      count: 10 + Math.min(100, Math.floor(i / 5)) 
+    });
+
+    // Secondary goal for variety
+    if (i > 3) {
+      if (i % 3 === 0) {
+        goals.push({ 
+          type: GoalType.COLLECT_COLOR, 
+          target: CANDY_COLORS[(colorIdx + 2) % CANDY_COLORS.length], 
+          count: 5 + Math.floor(i / 10) 
+        });
+      } else if (i % 7 === 0) {
+        goals.push({ 
+          type: GoalType.COLLECT_TYPE, 
+          target: CandyType.BOMB, 
+          count: 1 + Math.floor(i / 100) 
+        });
+      } else if (isHard) {
+        goals.push({ 
+          type: GoalType.COLLECT_TYPE, 
+          target: CandyType.STRIPE_H, 
+          count: 2 + Math.floor(i / 50) 
+        });
+      }
+    }
+
+    levels.push({
+      id: i,
+      title: i.toString(),
+      targetScore,
+      moves,
+      goals
+    });
   }
-];
+  return levels;
+};
+
+export const LEVELS: LevelConfig[] = generateLevels();
 
 export const CANDY_STYLES: Record<CandyColor, string> = {
   [CandyColor.RED]: 'bg-gradient-to-br from-red-400 to-red-600 shadow-red-200',

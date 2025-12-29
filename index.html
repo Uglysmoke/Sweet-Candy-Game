@@ -4,13 +4,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sweet Crush AI</title>
+    <title>Ugly Crush Candy AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Quicksand:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
         body {
             font-family: 'Quicksand', sans-serif;
-            background: #fdf2f8; /* Light pink background */
+            background: #fef2f2; /* Light red-ish background */
         }
         .font-game {
             font-family: 'Fredoka One', cursive;
@@ -124,10 +124,6 @@
         }
         .animate-game-over {
             animation: game-over-drop 0.8s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
-        }
-        @keyframes board-desaturate {
-            from { filter: saturate(1) blur(0); }
-            to { filter: saturate(0.2) blur(2px) brightness(0.7); }
         }
         .board-lost {
             animation: board-desaturate 1.5s forwards;
